@@ -431,4 +431,8 @@ class Bar: ...
 def test4(val: Intersection[tuple[Foo], tuple[Bar]]):
     # Intersection of tuples is simplified element-wise
     reveal_type(val[0])  # revealed: Foo & Bar
+
+def test5(val: Intersection[tuple[Foo, ...], tuple[Bar, ...]]):
+    # Intersection of homogeneous variable tuples is simplified element-wise
+    reveal_type(val[0])  # revealed: Foo & Bar
 ```

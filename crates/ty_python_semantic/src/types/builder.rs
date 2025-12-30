@@ -1141,9 +1141,10 @@ impl<'db> InnerIntersectionBuilder<'db> {
         }
     }
 
-    /// Try to intersect two fixed-length tuples element-wise.
+    /// Try to intersect two tuples element-wise.
     ///
-    /// For `tuple[A, B] & tuple[C, D]`, computes `tuple[A & C, B & D]`.
+    /// For fixed-length tuples: `tuple[A, B] & tuple[C, D]` -> `tuple[A & C, B & D]`
+    /// For variable-length tuples: `tuple[A, ...] & tuple[B, ...]` -> `tuple[A & B, ...]`
     fn try_intersect_tuples(
         &self,
         db: &'db dyn Db,
@@ -1158,12 +1159,7 @@ impl<'db> InnerIntersectionBuilder<'db> {
             return TupleIntersectionResult::NotApplicable;
         };
 
-        // Only handle fixed-length tuples.
-        let TupleSpec::Fixed(new_fixed) = new_tuple_spec.as_ref() else {
-            return TupleIntersectionResult::NotApplicable;
-        };
-
-        // Find an existing positive tuple with the same length.
+        // Find an existing positive tuple to intersect with.
         for (index, existing_positive) in self.positive.iter().enumerate() {
             let Some(existing_instance) = existing_positive.as_nominal_instance() else {
                 continue;
@@ -1171,15 +1167,6 @@ impl<'db> InnerIntersectionBuilder<'db> {
             let Some(existing_spec) = existing_instance.own_tuple_spec(db) else {
                 continue;
             };
-
-            // Only handle fixed-length tuples with same length.
-            let TupleSpec::Fixed(existing_fixed) = existing_spec.as_ref() else {
-                continue;
-            };
-
-            if existing_fixed.len() != new_fixed.len() {
-                continue;
-            }
 
             // Optimization: if one tuple is a subtype of the other, the intersection
             // is just the subtype, so we can skip element-wise intersection and let
@@ -1192,32 +1179,63 @@ impl<'db> InnerIntersectionBuilder<'db> {
                 return TupleIntersectionResult::SubtypeRelationship;
             }
 
-            let existing_elements = existing_fixed.all_elements();
-            let new_elements = new_fixed.all_elements();
+            match (existing_spec.as_ref(), new_tuple_spec.as_ref()) {
+                (TupleSpec::Fixed(existing_fixed), TupleSpec::Fixed(new_fixed)) => {
+                    if existing_fixed.len() != new_fixed.len() {
+                        continue;
+                    }
 
-            // Compute element-wise intersection.
-            let intersected_elements: Vec<_> = existing_elements
-                .iter()
-                .zip(new_elements)
-                .map(|(a, b)| {
-                    IntersectionBuilder::new(db)
-                        .add_positive(*a)
-                        .add_positive(*b)
-                        .build()
-                })
-                .collect();
+                    let intersected_elements: Vec<_> = existing_fixed
+                        .all_elements()
+                        .iter()
+                        .zip(new_fixed.all_elements())
+                        .map(|(a, b)| {
+                            IntersectionBuilder::new(db)
+                                .add_positive(*a)
+                                .add_positive(*b)
+                                .build()
+                        })
+                        .collect();
 
-            // If any element intersection is Never, the whole tuple is Never.
-            if intersected_elements.iter().any(Type::is_never) {
-                return TupleIntersectionResult::Never;
+                    if intersected_elements.iter().any(Type::is_never) {
+                        return TupleIntersectionResult::Never;
+                    }
+
+                    return TupleIntersectionResult::Intersected {
+                        tuple: Type::heterogeneous_tuple(db, intersected_elements),
+                        replace_index: index,
+                    };
+                }
+
+                (TupleSpec::Variable(existing_var), TupleSpec::Variable(new_var)) => {
+                    // Only handle simple homogeneous tuples (no prefix/suffix) for now
+                    if !existing_var.prefix_elements().is_empty()
+                        || !existing_var.suffix_elements().is_empty()
+                        || !new_var.prefix_elements().is_empty()
+                        || !new_var.suffix_elements().is_empty()
+                    {
+                        continue;
+                    }
+
+                    let intersected_variable = IntersectionBuilder::new(db)
+                        .add_positive(*existing_var.variable_element())
+                        .add_positive(*new_var.variable_element())
+                        .build();
+
+                    let intersected_tuple = if intersected_variable.is_never() {
+                        Type::empty_tuple(db)
+                    } else {
+                        Type::homogeneous_tuple(db, intersected_variable)
+                    };
+
+                    return TupleIntersectionResult::Intersected {
+                        tuple: intersected_tuple,
+                        replace_index: index,
+                    };
+                }
+
+                _ => continue,
             }
-
-            let intersected_tuple = Type::heterogeneous_tuple(db, intersected_elements);
-
-            return TupleIntersectionResult::Intersected {
-                tuple: intersected_tuple,
-                replace_index: index,
-            };
         }
 
         TupleIntersectionResult::NotApplicable

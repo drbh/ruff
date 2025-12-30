@@ -1531,48 +1531,38 @@ impl<'db, 'ast> NarrowingConstraintsBuilder<'db, 'ast> {
                     return None;
                 }
 
-                let elements = fixed.all_elements();
-
-                // Narrow each element based on its pattern.
-                elements
+                fixed
+                    .all_elements()
                     .iter()
                     .zip(element_patterns.iter())
                     .map(|(element_ty, pattern)| {
                         if let Some(constraint_ty) = self.pattern_to_type_constraint(pattern) {
-                            // Positive case: intersect element type with pattern constraint.
                             IntersectionBuilder::new(self.db)
                                 .add_positive(*element_ty)
                                 .add_positive(constraint_ty)
                                 .build()
                         } else {
-                            // No constraint from this pattern (e.g., wildcard).
                             *element_ty
                         }
                     })
                     .collect()
             }
             TupleSpec::Variable(variable) => {
-                // For variable-length tuples like `tuple[int | str, ...]`, a pattern like
-                // `(x, str())` narrows to a fixed-length tuple with the pattern's length.
-                //
-                // The tuple structure is: prefix + variable* + suffix.
+                // For variable-length tuples, narrow to a fixed-length tuple with the pattern's length.
                 let pattern_len = element_patterns.len();
                 let prefix = variable.prefix_elements();
                 let suffix = variable.suffix_elements();
                 let prefix_len = prefix.len();
                 let suffix_len = suffix.len();
 
-                // Pattern must have at least as many elements as prefix + suffix.
                 if pattern_len < prefix_len + suffix_len {
                     return None;
                 }
 
-                // Build element types for a fixed-length tuple matching the pattern.
                 element_patterns
                     .iter()
                     .enumerate()
                     .map(|(i, pattern)| {
-                        // Determine which part of the tuple this element comes from.
                         let element_ty = if i < prefix_len {
                             prefix[i]
                         } else if i >= pattern_len - suffix_len {
@@ -1581,7 +1571,6 @@ impl<'db, 'ast> NarrowingConstraintsBuilder<'db, 'ast> {
                             *variable.variable_element()
                         };
 
-                        // Apply pattern constraint if present.
                         if let Some(constraint_ty) = self.pattern_to_type_constraint(pattern) {
                             IntersectionBuilder::new(self.db)
                                 .add_positive(element_ty)
@@ -1595,7 +1584,6 @@ impl<'db, 'ast> NarrowingConstraintsBuilder<'db, 'ast> {
             }
         };
 
-        // Build the narrowed tuple type.
         let narrowed_tuple = Type::heterogeneous_tuple(self.db, narrowed_elements);
 
         Some(NarrowingConstraints::from_iter([(
@@ -1632,10 +1620,8 @@ impl<'db, 'ast> NarrowingConstraintsBuilder<'db, 'ast> {
             TupleSpec::Variable(_) => return None,
         };
 
-        // Get the pattern constraint for each position.
-        // For unconstrained patterns (wildcards, name bindings), we use `object` as the constraint.
-        // This means `A & ~object = Never`, so positions with wildcards won't contribute to the
-        // union (they can't be the "differing" position that makes the pattern not match).
+        // For unconstrained patterns (wildcards), use `object` so `A & ~object = Never`
+        // means those positions won't contribute to the union.
         let pattern_elements: Vec<Type<'db>> = element_patterns
             .iter()
             .map(|pattern| {
@@ -1644,31 +1630,25 @@ impl<'db, 'ast> NarrowingConstraintsBuilder<'db, 'ast> {
             })
             .collect();
 
-        // For each position i, compute the tuple where position i doesn't match the pattern.
-        // tuple[A & ~C, B] for position 0, tuple[A, B & ~D] for position 1, etc.
+        // For each position, compute tuple where that position doesn't match the pattern.
+        // Result: tuple[A & ~C, B] | tuple[A, B & ~D] for tuple[A, B] & ~tuple[C, D]
         let mut union_elements: Vec<Type<'db>> = Vec::new();
 
         for i in 0..subject_elements.len() {
-            // Compute subject_element[i] & ~pattern_element[i]
             let narrowed_element = IntersectionBuilder::new(db)
                 .add_positive(subject_elements[i])
                 .add_negative(pattern_elements[i])
                 .build();
 
-            // If this is Never, this position can't differ (subject is subtype of pattern)
-            // So skip this branch of the union
             if narrowed_element.is_never() {
                 continue;
             }
 
-            // Build a tuple where this position is narrowed and others keep their original types
             let mut new_elements = subject_elements.clone();
             new_elements[i] = narrowed_element;
-            let new_tuple = Type::heterogeneous_tuple(db, new_elements);
-            union_elements.push(new_tuple);
+            union_elements.push(Type::heterogeneous_tuple(db, new_elements));
         }
 
-        // If no union elements, the pattern always matches (negative is Never)
         if union_elements.is_empty() {
             return Some(NarrowingConstraints::from_iter([(
                 place,
@@ -1676,7 +1656,6 @@ impl<'db, 'ast> NarrowingConstraintsBuilder<'db, 'ast> {
             )]));
         }
 
-        // Build the union of tuples
         let narrowed = UnionType::from_elements(db, union_elements);
 
         Some(NarrowingConstraints::from_iter([(
