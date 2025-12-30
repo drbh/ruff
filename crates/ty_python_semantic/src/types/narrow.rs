@@ -1540,13 +1540,14 @@ impl<'db, 'ast> NarrowingConstraintsBuilder<'db, 'ast> {
                     .map(|(element_ty, pattern)| {
                         if let Some(constraint_ty) = self.pattern_to_type_constraint(pattern) {
                             // Positive case: intersect element type with pattern constraint.
-                            return IntersectionBuilder::new(self.db)
+                            IntersectionBuilder::new(self.db)
                                 .add_positive(*element_ty)
                                 .add_positive(constraint_ty)
-                                .build();
+                                .build()
+                        } else {
+                            // No constraint from this pattern (e.g., wildcard).
+                            *element_ty
                         }
-                        // No constraint from this pattern (e.g., wildcard).
-                        *element_ty
                     })
                     .collect()
             }
@@ -1582,12 +1583,13 @@ impl<'db, 'ast> NarrowingConstraintsBuilder<'db, 'ast> {
 
                         // Apply pattern constraint if present.
                         if let Some(constraint_ty) = self.pattern_to_type_constraint(pattern) {
-                            return IntersectionBuilder::new(self.db)
+                            IntersectionBuilder::new(self.db)
                                 .add_positive(element_ty)
                                 .add_positive(constraint_ty)
-                                .build();
+                                .build()
+                        } else {
+                            element_ty
                         }
-                        element_ty
                     })
                     .collect()
             }
@@ -1630,7 +1632,10 @@ impl<'db, 'ast> NarrowingConstraintsBuilder<'db, 'ast> {
             TupleSpec::Variable(_) => return None,
         };
 
-        // Get the pattern constraint for each position
+        // Get the pattern constraint for each position.
+        // For unconstrained patterns (wildcards, name bindings), we use `object` as the constraint.
+        // This means `A & ~object = Never`, so positions with wildcards won't contribute to the
+        // union (they can't be the "differing" position that makes the pattern not match).
         let pattern_elements: Vec<Type<'db>> = element_patterns
             .iter()
             .map(|pattern| {
