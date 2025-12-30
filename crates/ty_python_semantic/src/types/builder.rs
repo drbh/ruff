@@ -1004,6 +1004,85 @@ impl<'db> InnerIntersectionBuilder<'db> {
                     return;
                 }
 
+                // Handle tuple intersection: tuple[A, B] & tuple[C, D] -> tuple[A & C, B & D]
+                // We compute element-wise intersections directly using IntersectionBuilder.
+                // This naturally recurses for nested tuples, but the recursion depth is bounded
+                // by the tuple nesting depth which is finite in practice.
+                'tuple_check: {
+                    use crate::types::tuple::TupleSpec;
+
+                    let Some(new_instance) = new_positive.as_nominal_instance() else {
+                        break 'tuple_check;
+                    };
+                    let Some(new_tuple_spec) = new_instance.own_tuple_spec(db) else {
+                        break 'tuple_check;
+                    };
+
+                    // Only handle fixed-length tuples
+                    let TupleSpec::Fixed(new_fixed) = new_tuple_spec.as_ref() else {
+                        break 'tuple_check;
+                    };
+
+                    // Find an existing positive tuple with the same length
+                    for (index, existing_positive) in self.positive.iter().enumerate() {
+                        let Some(existing_instance) = existing_positive.as_nominal_instance()
+                        else {
+                            continue;
+                        };
+                        let Some(existing_spec) = existing_instance.own_tuple_spec(db) else {
+                            continue;
+                        };
+
+                        // Only handle fixed-length tuples with same length
+                        let TupleSpec::Fixed(existing_fixed) = existing_spec.as_ref() else {
+                            continue;
+                        };
+
+                        if existing_fixed.len() != new_fixed.len() {
+                            continue;
+                        }
+
+                        // Check if one tuple is already a subtype of the other.
+                        // If so, we don't need to do element-wise intersection.
+                        // This is important for recursive types where subsumption is complex.
+                        if new_positive.is_subtype_of(db, *existing_positive)
+                            || existing_positive.is_subtype_of(db, new_positive)
+                        {
+                            break 'tuple_check;
+                        }
+
+                        let existing_elements = existing_fixed.all_elements().to_vec();
+                        let new_elements = new_fixed.all_elements().to_vec();
+
+                        // Compute element-wise intersection using IntersectionBuilder.
+                        let intersected_elements: Vec<_> = existing_elements
+                            .iter()
+                            .zip(&new_elements)
+                            .map(|(a, b)| {
+                                IntersectionBuilder::new(db)
+                                    .add_positive(*a)
+                                    .add_positive(*b)
+                                    .build()
+                            })
+                            .collect();
+
+                        // If any element intersection is Never, the whole tuple is Never
+                        if intersected_elements.iter().any(Type::is_never) {
+                            self.positive.clear();
+                            self.negative.clear();
+                            self.positive.insert(Type::Never);
+                            return;
+                        }
+
+                        let intersected_tuple = Type::heterogeneous_tuple(db, intersected_elements);
+
+                        // Replace the existing tuple with the intersected one
+                        self.positive.swap_remove_index(index);
+                        self.positive.insert(intersected_tuple);
+                        return;
+                    }
+                }
+
                 let addition_is_bool_instance = known_instance == Some(KnownClass::Bool);
 
                 for (index, existing_positive) in self.positive.iter().enumerate() {

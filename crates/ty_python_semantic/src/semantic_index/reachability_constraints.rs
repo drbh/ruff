@@ -881,7 +881,9 @@ impl ReachabilityConstraints {
                         // Check each element pattern against its corresponding element type.
                         let mut result = Truthiness::AlwaysTrue;
 
-                        for (element_ty, pattern) in fixed.elements().zip(patterns.iter()) {
+                        for (element_ty, pattern) in
+                            fixed.all_elements().iter().zip(patterns.iter())
+                        {
                             let element_result = Self::analyze_single_pattern_predicate_kind(
                                 db,
                                 pattern,

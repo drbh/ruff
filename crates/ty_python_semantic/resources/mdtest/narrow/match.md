@@ -453,7 +453,8 @@ def _(subj: tuple[int | str, int | str]):
         case (x, str()):
             reveal_type(subj)  # revealed: tuple[int | str, str]
         case (int(), y):
-            reveal_type(subj)  # revealed: tuple[int, int | str]
+            # After first case, subject is tuple[int | str, int] (second element can't be str)
+            reveal_type(subj)  # revealed: tuple[int, int]
 
 def _(subj: tuple[int | str, int | str]):
     match subj:
@@ -465,7 +466,8 @@ def _(subj: tuple[int | str | None, int | str | None]):
         case (None, _):
             reveal_type(subj)  # revealed: tuple[None, int | str | None]
         case (_, None):
-            reveal_type(subj)  # revealed: tuple[int | str | None, None]
+            # After first case, subject is tuple[int | str, int | str | None] (first element can't be None)
+            reveal_type(subj)  # revealed: tuple[int | str, None]
 ```
 
 ## Sequence patterns with nested tuples
@@ -474,8 +476,9 @@ def _(subj: tuple[int | str | None, int | str | None]):
 def _(subj: tuple[tuple[int | str, int], int | str]):
     match subj:
         case ((str(), _), _):
-            # The inner tuple is narrowed by intersecting with the pattern's constraint
-            reveal_type(subj)  # revealed: tuple[tuple[int | str, int] & tuple[str, object], int | str]
+            # The inner tuple is narrowed by intersecting element-wise with the pattern's constraint
+            # tuple[int | str, int] & tuple[str, object] -> tuple[str, int]
+            reveal_type(subj)  # revealed: tuple[tuple[str, int], int | str]
 ```
 
 ## Sequence patterns with or patterns
@@ -505,8 +508,8 @@ def _(subj: tuple[int | str, int | str]):
 
 ## Sequence pattern negative narrowing
 
-Negative narrowing for sequence patterns is not currently supported. When a sequence pattern doesn't
-match, subsequent cases see the original type.
+When a sequence pattern doesn't match, the type is narrowed by subtracting the pattern type. The
+type system simplifies `tuple[A, B] & ~tuple[C, D]` to `tuple[A & ~C, B] | tuple[A, B & ~D]`.
 
 ```py
 def _(subj: tuple[int | str, int | str]):
@@ -514,7 +517,20 @@ def _(subj: tuple[int | str, int | str]):
         case (int(), int()):
             reveal_type(subj)  # revealed: tuple[int, int]
         case _:
-            reveal_type(subj)  # revealed: tuple[int | str, int | str]
+            # tuple[int | str, int | str] & ~tuple[int, int]
+            # = tuple[str, int | str] | tuple[int | str, str]
+            reveal_type(subj)  # revealed: tuple[str, int | str] | tuple[int | str, str]
+
+def _(subj: tuple[int | str, int | str]):
+    match subj:
+        case (x, str()):
+            reveal_type(subj)  # revealed: tuple[int | str, str]
+        case y:
+            # tuple[int | str, int | str] & ~tuple[object, str]
+            # First element: (int | str) & ~object = Never (can't differ here)
+            # Second element: (int | str) & ~str = int
+            # Result: tuple[int | str, int]
+            reveal_type(subj)  # revealed: tuple[int | str, int]
 ```
 
 ## Sequence pattern exhaustiveness
