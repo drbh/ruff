@@ -3,7 +3,6 @@ use core::fmt;
 use ruff_db::diagnostic::Diagnostic;
 use ruff_diagnostics::{Edit, Fix};
 use ruff_python_ast::token::{TokenKind, Tokens};
-use ruff_python_ast::whitespace::indentation;
 use ruff_python_index::Indexer;
 use rustc_hash::FxHashSet;
 use std::cell::Cell;
@@ -354,7 +353,6 @@ pub(crate) struct SuppressionsBuilder<'a> {
 
     valid: Vec<Suppression>,
     invalid: Vec<InvalidSuppression>,
-    errors: Vec<ParseError>,
 
     pending: Vec<PendingSuppressionComment<'a>>,
 }
