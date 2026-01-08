@@ -32,6 +32,7 @@ use crate::types::infer::{infer_expression_type, infer_unpack_types, nearest_enc
 use crate::types::member::{Member, class_member};
 use crate::types::relation::{
     HasRelationToVisitor, IsDisjointVisitor, IsEquivalentVisitor, TypeRelation,
+    default_disjoint_visitor, default_relation_visitor,
 };
 use crate::types::signatures::{CallableSignature, Parameter, Parameters, Signature};
 use crate::types::tuple::{TupleSpec, TupleType};
@@ -620,8 +621,8 @@ impl<'db> ClassType<'db> {
             other,
             inferable,
             TypeRelation::Subtyping,
-            &HasRelationToVisitor::default(),
-            &IsDisjointVisitor::default(),
+            &default_relation_visitor(db),
+            &default_disjoint_visitor(db),
         )
     }
 
@@ -640,37 +641,40 @@ impl<'db> ClassType<'db> {
                     TypeRelation::Subtyping
                     | TypeRelation::Redundancy
                     | TypeRelation::SubtypingAssuming(_) => {
-                        ConstraintSet::from(other.is_object(db))
+                        ConstraintSet::from_bool(db, other.is_object(db))
                     }
                     TypeRelation::Assignability | TypeRelation::ConstraintSetAssignability => {
-                        ConstraintSet::from(!other.is_final(db))
+                        ConstraintSet::from_bool(db, !other.is_final(db))
                     }
                 },
 
                 // Protocol, Generic, and TypedDict are not represented by a ClassType.
                 ClassBase::Protocol | ClassBase::Generic | ClassBase::TypedDict => {
-                    ConstraintSet::from(false)
+                    ConstraintSet::from_bool(db, false)
                 }
 
                 ClassBase::Class(base) => match (base, other) {
                     (ClassType::NonGeneric(base), ClassType::NonGeneric(other)) => {
-                        ConstraintSet::from(base == other)
+                        ConstraintSet::from_bool(db, base == other)
                     }
                     (ClassType::Generic(base), ClassType::Generic(other)) => {
-                        ConstraintSet::from(base.origin(db) == other.origin(db)).and(db, || {
-                            base.specialization(db).has_relation_to_impl(
-                                db,
-                                other.specialization(db),
-                                inferable,
-                                relation,
-                                relation_visitor,
-                                disjointness_visitor,
-                            )
-                        })
+                        ConstraintSet::from_bool(db, base.origin(db) == other.origin(db)).and(
+                            db,
+                            || {
+                                base.specialization(db).has_relation_to_impl(
+                                    db,
+                                    other.specialization(db),
+                                    inferable,
+                                    relation,
+                                    relation_visitor,
+                                    disjointness_visitor,
+                                )
+                            },
+                        )
                     }
                     (ClassType::Generic(_), ClassType::NonGeneric(_))
                     | (ClassType::NonGeneric(_), ClassType::Generic(_)) => {
-                        ConstraintSet::from(false)
+                        ConstraintSet::from_bool(db, false)
                     }
                 },
             }
@@ -685,18 +689,18 @@ impl<'db> ClassType<'db> {
         visitor: &IsEquivalentVisitor<'db>,
     ) -> ConstraintSet<'db> {
         if self == other {
-            return ConstraintSet::from(true);
+            return ConstraintSet::from_bool(db, true);
         }
 
         match (self, other) {
             // A non-generic class is never equivalent to a generic class.
             // Two non-generic classes are only equivalent if they are equal (handled above).
             (ClassType::NonGeneric(_), _) | (_, ClassType::NonGeneric(_)) => {
-                ConstraintSet::from(false)
+                ConstraintSet::from_bool(db, false)
             }
 
             (ClassType::Generic(this), ClassType::Generic(other)) => {
-                ConstraintSet::from(this.origin(db) == other.origin(db)).and(db, || {
+                ConstraintSet::from_bool(db, this.origin(db) == other.origin(db)).and(db, || {
                     this.specialization(db).is_equivalent_to_impl(
                         db,
                         other.specialization(db),
@@ -5376,7 +5380,7 @@ impl KnownClass {
         db: &'db dyn Db,
         other: ClassType<'db>,
     ) -> ConstraintSet<'db> {
-        ConstraintSet::from(self.is_subclass_of(db, other))
+        ConstraintSet::from_bool(db, self.is_subclass_of(db, other))
     }
 
     /// Return the module in which we should look up the definition for this class
