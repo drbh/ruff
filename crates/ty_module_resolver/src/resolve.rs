@@ -1261,9 +1261,13 @@ fn resolve_name_impl<'a>(
         // The existence of a single non-namespace package will shadow
         // all namespace packages *regardless of search-path order*.
         // This is implemented with the `retain` that follows.
+        //
+        // We can't do this "delete all namespace packages" eagerly because we want a
+        // `PyTyped::Partial` regular package to shadow namespace packages after it.
+        // (FIXME: I guess we could just set a flag not to add them...)
 
         // First record whether we discovered a non-namespace package, and filter out others
-        // (This could could be a lot more simple but we track details for logging)
+        // (This could could be a lot more simple but we track details for
         let mut found_module: Option<_> = None;
         let mut found_regular_package = None;
         let mut found_legacy_namespace_package = None;
