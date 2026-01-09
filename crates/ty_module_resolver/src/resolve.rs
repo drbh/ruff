@@ -1207,39 +1207,34 @@ fn resolve_name_impl<'a>(
     // reduced down to a single candidate, so maybe meh?
     let mut is_root = true;
     for component in name.components() {
-        // Look for `mypackage-stubs` first, so they're considered higher priority over runtime
-        if is_root && context.mode.stubs_allowed() {
-            for candidate in &cur_candidates {
-                // Optimization: the stdlib/typeshed never contains `-stubs`
-                if candidate.path.search_path().is_standard_library() {
-                    continue;
-                }
-
-                let stub_name = stub_name.get_or_insert_with(|| format!("{component}-stubs"));
-                let mut stub_candidate = candidate.clone();
-                if resolve_name_in_search_path(&context, &mut stub_candidate, stub_name).is_err() {
-                    // NOTE: we don't need to check missing_submodule_is_terminal here because
-                    // this only runs if `is_root` (we're not in *any* package, which is basically
-                    // the same as being in a namespace package)
-                    continue;
-                }
-
-                // `mypackage-stubs.py(i)` is not a valid result
-                if matches!(stub_candidate.module, ResolvedModule::Module(_)) {
-                    tracing::trace!(
-                        "Search path `{}` contains a module \
-                        named `{stub_name}` but a standalone module isn't a valid stub.",
-                        candidate.path.search_path()
-                    );
-                    continue;
-                }
-
-                next_candidates.push(stub_candidate);
-            }
-        }
-
         // Search for the next component in every search-path
         for mut candidate in cur_candidates.drain(..) {
+            // On the first iteration, look for `mypackage-stubs` as well
+            // Optimization: stdlib never has these `-stubs`
+            if is_root
+                && context.mode.stubs_allowed()
+                && !candidate.path.search_path().is_standard_library()
+            {
+                let stub_name = stub_name.get_or_insert_with(|| format!("{component}-stubs"));
+                let mut stub_candidate = candidate.clone();
+                if resolve_name_in_search_path(&context, &mut stub_candidate, stub_name).is_ok() {
+                    // `mypackage-stubs.py(i)` is not a valid result
+                    if matches!(stub_candidate.module, ResolvedModule::Module(_)) {
+                        tracing::trace!(
+                            "Search path `{}` contains a module \
+                            named `{stub_name}` but a standalone module isn't a valid stub.",
+                            candidate.path.search_path()
+                        );
+                    } else {
+                        let shadows_all = stub_candidate.missing_submodule_is_terminal();
+                        next_candidates.push(stub_candidate);
+                        if shadows_all {
+                            break;
+                        }
+                    }
+                }
+            }
+
             if resolve_name_in_search_path(&context, &mut candidate, component).is_err() {
                 if candidate.missing_submodule_is_terminal() {
                     // Everything after this package should be shadowed out by this failure
@@ -1266,13 +1261,9 @@ fn resolve_name_impl<'a>(
         // The existence of a single non-namespace package will shadow
         // all namespace packages *regardless of search-path order*.
         // This is implemented with the `retain` that follows.
-        //
-        // The existence of `mypackage-stubs` will shadow all instances of `mypackage`
-        // *regardless of search-path order* unless `mypackage-stubs` is `PyType::Partial`.
-        // This is implemented by the `missing_submodule_is_terminal` check above,
-        // because we pre-sorted `-stubs` packages to come before real packages.
 
         // First record whether we discovered a non-namespace package, and filter out others
+        // (This could could be a lot more simple but we track details for logging)
         let mut found_module: Option<_> = None;
         let mut found_regular_package = None;
         let mut found_legacy_namespace_package = None;
