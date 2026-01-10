@@ -352,15 +352,16 @@ def two_final_constrained[T: (FinalClass, AnotherFinalClass), U: (FinalClass, An
     static_assert(not is_subtype_of(U, T))
 ```
 
-A bound or constrained typevar is a subtype of itself in a union:
+A bound or constrained typevar is not a subtype of itself in a union, since subtyping between a
+TypeVar and an arbitrary other type cannot be guaranteed to be reflexive.
 
 ```py
 def union[T: Base, U: (Base, Unrelated)](t: T, u: U) -> None:
     static_assert(is_assignable_to(T, T | None))
     static_assert(is_assignable_to(U, U | None))
 
-    static_assert(is_subtype_of(T, T | None))
-    static_assert(is_subtype_of(U, U | None))
+    static_assert(not is_subtype_of(T, T | None))
+    static_assert(not is_subtype_of(U, U | None))
 ```
 
 A bound or constrained typevar in a union with a dynamic type is assignable to the typevar:
