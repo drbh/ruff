@@ -48,7 +48,9 @@ impl Default for TypedDictParams {
 
 /// Type that represents the set of all inhabitants (`dict` instances) that conform to
 /// a given `TypedDict` schema.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, salsa::Update, Hash, get_size2::GetSize)]
+#[derive(
+    Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, salsa::Update, Hash, get_size2::GetSize,
+)]
 pub enum TypedDictType<'db> {
     /// A reference to the class (inheriting from `typing.TypedDict`) that specifies the
     /// schema of this `TypedDict`.
@@ -879,6 +881,7 @@ pub(super) fn validate_typed_dict_dict_literal<'db>(
 }
 
 #[salsa::interned(debug, heap_size=ruff_memory_usage::heap_size)]
+#[derive(PartialOrd, Ord)]
 pub struct SynthesizedTypedDictType<'db> {
     #[returns(ref)]
     pub(crate) items: TypedDictSchema<'db>,
