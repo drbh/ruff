@@ -44,7 +44,7 @@ use crate::types::{
     DeprecatedInstance, FindLegacyTypeVarsVisitor, IntersectionType, KnownInstanceType,
     ManualPEP695TypeAliasType, MaterializationKind, NormalizedVisitor, PropertyInstanceType,
     TypeAliasType, TypeContext, TypeMapping, TypedDictParams, UnionBuilder, VarianceInferable,
-    binding_type, declaration_type, determine_upper_bound,
+    binding_type, declaration_type, determine_upper_bound, todo_type,
 };
 use crate::{
     Db, FxIndexMap, FxIndexSet, FxOrderSet, Program,
@@ -1839,6 +1839,11 @@ impl<'db> ClassLiteral<'db> {
 
         let module = parsed_module(db, self.file(db)).load(db);
         let class_stmt = self.node(db, &module);
+
+        if class_stmt.bases().iter().any(ast::Expr::is_starred_expr) {
+            return Box::new([todo_type!("Starred expressions in class bases")]);
+        }
+
         let class_definition =
             semantic_index(db, self.file(db)).expect_single_definition(class_stmt);
 

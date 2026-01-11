@@ -2191,6 +2191,15 @@ pub(crate) struct Parameter<'db> {
     /// type semantics of the parameter.
     pub(crate) inferred_annotation: bool,
 
+    /// Variadic parameters can have starred annotations, e.g.
+    /// - `*args: *Ts`
+    /// - `*args: *tuple[int, ...]`
+    /// - `*args: *tuple[int, *tuple[str, ...], bytes]`
+    ///
+    /// The `*` prior to the type gives the annotation a different meaning,
+    /// so this must be propagated upwards.
+    has_starred_annotation: bool,
+
     kind: ParameterKind<'db>,
     pub(crate) form: ParameterForm,
 }
@@ -2200,6 +2209,7 @@ impl<'db> Parameter<'db> {
         Self {
             annotated_type: Type::unknown(),
             inferred_annotation: true,
+            has_starred_annotation: false,
             kind: ParameterKind::PositionalOnly {
                 name,
                 default_type: None,
@@ -2212,6 +2222,7 @@ impl<'db> Parameter<'db> {
         Self {
             annotated_type: Type::unknown(),
             inferred_annotation: true,
+            has_starred_annotation: false,
             kind: ParameterKind::PositionalOrKeyword {
                 name,
                 default_type: None,
@@ -2224,6 +2235,7 @@ impl<'db> Parameter<'db> {
         Self {
             annotated_type: Type::unknown(),
             inferred_annotation: true,
+            has_starred_annotation: false,
             kind: ParameterKind::Variadic { name },
             form: ParameterForm::Value,
         }
@@ -2233,6 +2245,7 @@ impl<'db> Parameter<'db> {
         Self {
             annotated_type: Type::unknown(),
             inferred_annotation: true,
+            has_starred_annotation: false,
             kind: ParameterKind::KeywordOnly {
                 name,
                 default_type: None,
@@ -2245,6 +2258,7 @@ impl<'db> Parameter<'db> {
         Self {
             annotated_type: Type::unknown(),
             inferred_annotation: true,
+            has_starred_annotation: false,
             kind: ParameterKind::KeywordVariadic { name },
             form: ParameterForm::Value,
         }
@@ -2293,6 +2307,7 @@ impl<'db> Parameter<'db> {
                 .kind
                 .apply_type_mapping_impl(db, type_mapping, tcx, visitor),
             inferred_annotation: self.inferred_annotation,
+            has_starred_annotation: self.has_starred_annotation,
             form: self.form,
         }
     }
@@ -2310,7 +2325,8 @@ impl<'db> Parameter<'db> {
             annotated_type,
             kind,
             form,
-            ..
+            has_starred_annotation,
+            inferred_annotation: _,
         } = self;
 
         // Ensure unions and intersections are ordered in the annotated type.
@@ -2351,6 +2367,7 @@ impl<'db> Parameter<'db> {
             // Normalize `inferred_annotation` to `false` since it's a display-only field
             // that doesn't affect type semantics.
             inferred_annotation: false,
+            has_starred_annotation: *has_starred_annotation,
             kind,
             form: *form,
         }
@@ -2364,6 +2381,7 @@ impl<'db> Parameter<'db> {
     ) -> Option<Self> {
         let Parameter {
             annotated_type,
+            has_starred_annotation,
             inferred_annotation,
             kind,
             form,
@@ -2424,6 +2442,7 @@ impl<'db> Parameter<'db> {
         Some(Self {
             annotated_type,
             inferred_annotation: *inferred_annotation,
+            has_starred_annotation: *has_starred_annotation,
             kind,
             form: *form,
         })
@@ -2435,18 +2454,20 @@ impl<'db> Parameter<'db> {
         parameter: &ast::Parameter,
         kind: ParameterKind<'db>,
     ) -> Self {
-        let (annotated_type, inferred_annotation) = if let Some(annotation) = parameter.annotation()
-        {
-            (
-                function_signature_expression_type(db, definition, annotation),
-                false,
-            )
-        } else {
-            (Type::unknown(), true)
-        };
+        let (annotated_type, inferred_annotation, has_starred_annotation) =
+            if let Some(annotation) = parameter.annotation() {
+                (
+                    function_signature_expression_type(db, definition, annotation),
+                    false,
+                    annotation.is_starred_expr(),
+                )
+            } else {
+                (Type::unknown(), true, false)
+            };
         Self {
             annotated_type,
             kind,
+            has_starred_annotation,
             form: ParameterForm::Value,
             inferred_annotation,
         }
@@ -2496,6 +2517,12 @@ impl<'db> Parameter<'db> {
     /// Annotated type of the parameter. If no annotation was provided, this is `Unknown`.
     pub(crate) fn annotated_type(&self) -> Type<'db> {
         self.annotated_type
+    }
+
+    /// Return `true` if this parameter has a starred annotation,
+    /// e.g. `*args: *Ts` or `*args: *tuple[int, *tuple[str, ...], bytes]`
+    pub(crate) fn has_starred_annotation(&self) -> bool {
+        self.has_starred_annotation
     }
 
     /// Kind of the parameter.
